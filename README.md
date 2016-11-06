@@ -1,5 +1,23 @@
 # dev-scripts
 ###Docker based  infrastructure management for Odoo v8 v9
+Sacar los datos del script
+DISCUSION
+Pongo los datos del cliente (repos & images) en un repo customer, donde cada cliente es un 
+branch.
+Cuando hago -c pepe hay que hacer un checkout de pepe en el repo customer y leer los
+datos del cliente de ahi. en cualquier comando que tenga un -c
+
+-r -c pepe el tipo se va a bajar el branch. a menos que vea que hay en .git/HEAD y no
+lo baje si no hace falta. De todas formas cuando cambio de branch hay que bajarlo por las 
+dudas haya cambiado.
+En realidad haciendo un pull bajan todos los branches...
+
+Pasaria lo mismo con odooenv, hay que bajarlo por si cambió...
+podría agregarle un -p para que haga un pull forzado
+
+Tal vez no sea buena idea poner un repo separado, podríamos poner el archivo
+data.json en dev_scripts.
+
 This proyect support [semver](http://semver.org/) 
     
     usage: odooenv.py [-h] [-i] [-U] [-R] [-S] [-r] [-s] [-p] [-l] [-v] [-q] [-n]

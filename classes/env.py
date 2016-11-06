@@ -20,6 +20,10 @@
 # -----------------------------------------------------------------------------------
 import sys
 import logging
+import json
+import os
+import shlex
+import subprocess
 
 logger = logging.getLogger(__name__)
 logger.info('this does not work :(')
@@ -94,13 +98,14 @@ clients__ = [
          {'usr': 'jobiols', 'repo': 'knowledge', 'branch': '8.0'},
          {'usr': 'jobiols', 'repo': 'server-tools', 'branch': '8.0'},
          {'usr': 'jobiols', 'repo': 'bank-statement-import', 'branch': '8.0'},
-         {'usr': 'jobiols', 'repo': 'odoomrp-wip', 'branch': '8.0'},   #lo sacaron de la oca lo necesito por el recalculate_prices
+         {'usr': 'jobiols', 'repo': 'odoomrp-wip', 'branch': '8.0'},
+         # lo sacaron de la oca lo necesito por el recalculate_prices
          {'usr': 'jobiols', 'repo': 'web', 'branch': '8.0'},
          {'usr': 'jobiols', 'repo': 'social', 'branch': '8.0'},
-# lo pide por un modulo lote lock o algo parecido al instalar base vacia
-         {'usr': 'oca',     'repo': 'stock-logistics-warehouse','branch': '8.0'},
-         {'usr': 'oca'    , 'repo': 'stock-logistics-workflow', 'branch': '8.0'},
-         {'usr': 'ingadhoc','repo': 'website', 'branch': '8.0'},
+         # lo pide por un modulo lote lock o algo parecido al instalar base vacia
+         {'usr': 'oca', 'repo': 'stock-logistics-warehouse', 'branch': '8.0'},
+         {'usr': 'oca', 'repo': 'stock-logistics-workflow', 'branch': '8.0'},
+         {'usr': 'ingadhoc', 'repo': 'website', 'branch': '8.0'},
 
          # prestashop
          #         {'usr': 'OCA', 'repo': 'connector', 'branch': '8.0'},
@@ -288,9 +293,9 @@ clients__ = [
          {'usr': 'ingadhoc', 'repo': 'account-financial-tools', 'branch': '9.0'},
          {'usr': 'oca', 'repo': 'partner-contact', 'branch': '9.0'},
          #
-#         {'usr': 'jobiols', 'repo': 'temp_modules', 'branch': '9.0'},
-#         {'usr': 'jobiols', 'repo': 'cursos', 'branch': '9.0'},
-#         {'usr': 'oca', 'repo': 'knowledge', 'branch': '9.0'},
+         #         {'usr': 'jobiols', 'repo': 'temp_modules', 'branch': '9.0'},
+         #         {'usr': 'jobiols', 'repo': 'cursos', 'branch': '9.0'},
+         #         {'usr': 'oca', 'repo': 'knowledge', 'branch': '9.0'},
      ],
      'images': [
          {'name': 'aeroo', 'usr': 'jobiols', 'img': 'aeroo-docs'},
@@ -307,9 +312,9 @@ clients__ = [
          {'usr': 'ingadhoc', 'repo': 'account-financial-tools', 'branch': '9.0'},
          {'usr': 'oca', 'repo': 'partner-contact', 'branch': '9.0'},
          #
-#         {'usr': 'jobiols', 'repo': 'temp_modules', 'branch': '9.0'},
-#         {'usr': 'jobiols', 'repo': 'cursos', 'branch': '9.0'},
-#         {'usr': 'oca', 'repo': 'knowledge', 'branch': '9.0'},
+         #         {'usr': 'jobiols', 'repo': 'temp_modules', 'branch': '9.0'},
+         #         {'usr': 'jobiols', 'repo': 'cursos', 'branch': '9.0'},
+         #         {'usr': 'oca', 'repo': 'knowledge', 'branch': '9.0'},
      ],
      'images': [
          {'name': 'odoo', 'usr': 'jobiols', 'img': 'docker-openupgrade', 'ver': '9.0'},
@@ -327,16 +332,37 @@ CLEAR = "\033[0;m"
 
 class Environment:
     def __init__(self, args, clients):
+        """
         self._clients = []
         for cli in clients:
             self._clients.append(Client(self, cli))
+        """
 
-        self._home_dir = '/odoo/'
+        self._home_dir = '/odoo1/'
         self._home_template = self._home_dir + 'odoo-'
         self._psql = self._home_dir + 'postgresql/'
         self._args = args
 
-    def get_base_dir(self):
+    def sc_(self, params):
+        _params = []
+        ret = 0
+        if type(params) == type([]):
+            for item in params:
+                _params.append(item)
+        else:
+            _params.append(params)
+
+        for item in _params:
+            lparams = shlex.split(item)
+
+            if self._args.verbose:
+                print item
+            # print lparams
+
+            ret += subprocess.call(params, shell=True)
+        return ret
+
+    def home_dir(self):
         return self._home_dir
 
     def debug_mode(self):
@@ -396,10 +422,6 @@ class Environment:
         if self._args.client is None:
             self.msgerr('need -c option (client name)')
 
-        for cli in self._args.client:
-            if self.get_client(cli) is None:
-                self.msgerr('there is no ' + cli + ' client in this environment')
-
         if cant == 'multi':
             return self._args.client
         else:
@@ -411,11 +433,20 @@ class Environment:
         return self._args
 
     def get_client(self, clientName):
-        cli = None
-        for client in self._clients:
-            if client.get_name() == clientName:
-                cli = client
-        return cli
+        # crear repo customer para leer los datos del cliente
+        repo = Repo(self, False,
+                    {'repo': 'customer',
+                     'usr': 'jobiols',
+                     'branch': clientName}
+                    )
+        # actualizar el repo
+        repo.update()
+        # leer el archivo data que está en el repo
+        datafile = '{}data.json'.format(repo.dir())
+        with open(datafile) as f:
+            data = json.load(f)
+        # crear el objeto cliente a partir de los datos leidos y devolverlo
+        return Client(self, data)
 
     def get_clients_form_dict(self):
         return self._clients
@@ -462,20 +493,16 @@ class Client:
         self._name = dic['name']
         self._port = dic['port']
         self._ver = dic['odoover']
-        self._repos = []
-        for rep in dic['repos']:
-            self._repos.append(Repo(self, rep))
+
+        # crear las imagenes
         self._images = []
         for img in dic['images']:
             self._images.append(Image(self, img))
 
-        try:
-            self._install = dic['install']
-        except:
-            self._install = None
-
-    def get_base_dir(self):
-        return self._env.get_base_dir()
+        # crear los repos
+        self._repos = []
+        for rep in dic['repos']:
+            self._repos.append(Repo(env, self, rep))
 
     def get_ver(self):
         return self._ver
@@ -518,21 +545,17 @@ class Client:
             paths.append(path + repo.getPathDir())
         return ','.join(paths)
 
+    def update_repos(self):
+        for rep in self._repos:
+            rep.update()
 
 class Repo:
-    def __init__(self, cli, dict):
-        self._dict = dict
-        self._cli = cli
-
-    def get_name(self):
-        return self._dict['repo']
-
-    def _getRepo(self):
-        return self._dict['usr'] + '/' + self._dict['repo']
-
-    def get_formatted_repo(self):
-        ret = 'b ' + self._dict['branch'].ljust(7) + ' ' + self._getRepo().ljust(30)
-        return ret
+    def __init__(self, env, client, dict):
+        self._env = env
+        self._cli = client
+        self._repo = dict['repo']
+        self._usr = dict['usr']
+        self._branch = dict['branch']
 
     def getPathDir(self):
         try:
@@ -541,9 +564,41 @@ class Repo:
             try:
                 ret = self._dict['repo'] + '/' + self._dict['innerdir']
             except:
-                ret = self._dict['repo']
+                ret = self._repo
 
         return ret
+
+    def update(self):
+        # verificar si existe el directorio
+        if os.path.isdir(self.dir()):
+            # el direcotrio existe hacemos pull
+            self._env.msginf('pulling  ' + self.get_formatted_repo())
+            if self._env.sc_(self.getPullRepo()):
+                self._env.msgerr('Fail installing environment, uninstall and try again.')
+        else:
+            # el directorio no existe hacemos clone
+            self._env.msginf('cloning {}'.format(self.get_formatted_repo()))
+            if self._env.sc_(self.getCloneRepo()):
+                self._env.msgerr('Fail installing environment, uninstall and try again.')
+
+    def dir(self):
+        # Directorio donde está el repo
+        if self._cli:
+            # es el repo de un cliente
+            return '{}odoo-{}/sources/{}/'.format(self._env.home_dir(), self._branch,
+                                                  self._repo)
+        else:
+            # no hay cliente, es el customer repo
+            return '{}{}/'.format(self._env.home_dir(), self._repo)
+
+    def get_name(self):
+        return self._dict['repo']
+
+    def _getRepo(self):
+        return self._dict['usr'] + '/' + self._dict['repo']
+
+    def get_formatted_repo(self):
+        return 'b {} {}/{}'.format(self._branch, self._usr, self._repo)
 
     def getInstDir(self):
         try:
@@ -553,19 +608,17 @@ class Repo:
         return self._cli.get_home_dir() + 'sources/' + ret
 
     def getPullRepo(self):
-        return 'git -C {} pull'.format(self.getInstDir())
+        return 'git -C {} pull'.format(self.dir())
 
-    def getCloneRepo(self, e):
-        if not e.debug_mode():
-            depth = ' --depth 1 '
-        else:
-            depth = ''
-
-        return 'git clone {} -b {} http://github.com/{} {}'.format(
+    def getCloneRepo(self):
+        depth = '--depth 1' if not self._env.debug_mode() else ''
+        return 'git clone {} -b {} http://github.com/{}/{} {}'.format(
             depth,
-            self._dict['branch'],
-            self._getRepo(),
-            self.getInstDir())
+            self._branch,
+            self._usr,
+            self._repo,
+            self.dir()
+        )
 
     def getTagRepo(self, tag):
         return [
@@ -574,7 +627,6 @@ class Repo:
                 self._dict['branch'], self._getRepo(), self.getInstDir()),
             'git -C {} checkout tags/{}'.format(self.getInstDir(), tag)
         ]
-
 
 class Image:
     def __init__(self, cli, dict):

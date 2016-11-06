@@ -36,8 +36,6 @@ import argparse
 import os
 import pwd
 from datetime import datetime
-import subprocess
-import shlex
 import time
 import logging
 import logging.handlers
@@ -45,6 +43,7 @@ import logging.handlers
 from classes import Environment, clients__
 from classes.git_issues import Issues
 
+"""
 def sc_(params):
     _params = []
     ret = 0
@@ -63,19 +62,7 @@ def sc_(params):
 
         ret += subprocess.call(params, shell=True)
     return ret
-
-def uninstall_client(e):
-    clients = e.get_clients_from_params()
-    if raw_input('Delete postgresql directory? (y/n) ') == 'y':
-        if raw_input('Delete ALL databases for ALL clients SURE?? (y/n) ') == 'y':
-            e.msginf('deleting all databases!')
-            sc_(['sudo rm -r ' + e.get_psql_dir()])
-
-    for clientName in clients:
-        cli = e.get_client(clientName)
-        e.msgrun('deleting client files for client ' + clientName)
-        if sc_(['sudo rm -r ' + cli.get_home_dir() + clientName]):
-            e.msgerr('fail uninstalling client ' + clientName)
+"""
 
 
 def update_db(e):
@@ -158,70 +145,60 @@ def update_repos_from_list(e, repos):
 
 
 def install_client(e):
-    # get clients to install from params
-    clients = e.get_clients_from_params()
-    if len(clients) > 1:
-        plural = 's'
-    else:
-        plural = ''
-    e.msgrun('Install client' + plural + ' ' + ', '.join(clients))
+    # get client to install from params
+    client_name = e.get_clients_from_params(cant='one')
 
-    for client_name in clients:
+    if not os.path.isdir(e.home_dir()):
+        e.sc_('sudo mkdir {}'.format(e.home_dir()))
+    # change ownership to current user
+    username = pwd.getpwuid(os.getuid()).pw_name
+    e.sc_('sudo chown {}:{} {}'.format(username, username, e.home_dir()))
 
-        cli = e.get_client(client_name)
+    # crear el cli, esto baja el repo customer en el home_dir
+    cli = e.get_client(client_name)
 
-        # Creating directory's for installation
-        sc_('sudo mkdir ' + cli.get_base_dir())
-        username = pwd.getpwuid(os.getuid()).pw_name
-        # change ownership to current user
-        sc_('sudo chown ' + username + ':' + username + ' ' + cli.get_base_dir())
+    # Creating directory's for installation
+    e.sc_('mkdir -p {}{}/config'.format(cli.get_home_dir(), cli.get_name()))
+    e.sc_('mkdir -p {}{}/data_dir'.format(cli.get_home_dir(), cli.get_name()))
+    e.sc_('mkdir -p {}{}/log'.format(cli.get_home_dir(), cli.get_name()))
+    # darle permisos para que la imagen pueda escribir
+    e.sc_('chmod -R o+w {}{}'.format(cli.get_home_dir(), cli.get_name()))
+    e.sc_('mkdir -p {}sources'.format(cli.get_home_dir()))
 
-        sc_('mkdir -p ' + cli.get_home_dir() + cli.get_name() + '/config')
-        sc_('mkdir -p ' + cli.get_home_dir() + cli.get_name() + '/data_dir')
-        sc_('mkdir -p ' + cli.get_home_dir() + cli.get_name() + '/log')
-        sc_('chmod 777 -R ' + cli.get_home_dir() + cli.get_name())
-        sc_('mkdir -p ' + cli.get_home_dir() + 'sources')
+    # if not exist postgresql create it
+    if not os.path.isdir(e.get_psql_dir()):
+        e.sc_('mkdir ' + e.get_psql_dir())
 
-        # if not exist postgresql create it
-        if not os.path.isdir(e.get_psql_dir()):
-            sc_('mkdir ' + e.get_psql_dir())
+    # if not exist log create it
+    if not os.path.isfile(LOG_FILENAME):
+        e.sc_('sudo mkdir -p ' + os.path.dirname(LOG_FILENAME))
+        e.sc_('sudo touch ' + LOG_FILENAME)
+        e.sc_('sudo chmod 666 ' + LOG_FILENAME)
 
-        # if not exist log create it
-        if not os.path.isfile(LOG_FILENAME):
-            sc_('sudo mkdir -p ' + os.path.dirname(LOG_FILENAME))
-            sc_('sudo touch ' + LOG_FILENAME)
-            sc_('sudo chmod 666 ' + LOG_FILENAME)
+    e.msgrun('Installing client {}'.format(client_name))
 
-        # make sources dir
-        # if not exist sources dir create it
-        if not os.path.isdir(cli.get_home_dir() + 'sources'):
-            sc_('mkdir -p ' + cli.get_home_dir() + 'sources')
+    # clone or pull repos as needed
+    cli.update_repos()
 
-        # clone or update repos as needed
-        update_repos_from_list(e, cli.get_repos())
+    # creating config file for client
+    param = 'sudo docker run --rm '
+    param += '-v {}{}/config:/etc/odoo '.format(cli.get_home_dir(), cli.get_name())
+    param += '-v {}sources:/mnt/extra-addons '.format(cli.get_home_dir())
+    param += '-v {}{}/data_dir:/var/lib/odoo '.format(cli.get_home_dir(), cli.get_name())
+    param += '-v {}{}/log:/var/log/odoo '.format(cli.get_home_dir(), cli.get_name())
+    param += '--name {}_tmp '.format(cli.get_name())
+    param += '{} '.format(cli.get_image('odoo').get_image())
+    param += '-- --stop-after-init -s '
+    param += '--db-filter={}_.* '.format(cli.get_name())
 
-        # creating config file for client
-        param = 'sudo docker run --rm '
-        param += '-v ' + cli.get_home_dir() + cli.get_name() + '/config:/etc/odoo '
-        param += '-v ' + cli.get_home_dir() + 'sources:/mnt/extra-addons '
-        param += '-v ' + cli.get_home_dir() + cli.get_name() + '/data_dir:/var/lib/odoo '
-        param += '-v ' + cli.get_home_dir() + cli.get_name() + '/log:/var/log/odoo '
-        param += '--name ' + cli.get_name() + '_tmp '
-        param += cli.get_image('odoo').get_image() + ' '
-        param += '-- --stop-after-init -s '
-        param += '--db-filter=' + cli.get_name() + '_.* '
+    ou = '/opt/openerp/addons,' if client_name == 'ou' else ''
+    param += '--addons-path={}{} '.format(ou, cli.get_addons_path())
+    param += '--logfile=/var/log/odoo/odoo.log '
+    param += '--logrotate '
 
-        if client_name == 'ou':
-            ou = '/opt/openerp/addons,'
-        else:
-            ou = ''
-        param += '--addons-path=' + ou + cli.get_addons_path() + ' '
-        param += '--logfile=/var/log/odoo/odoo.log '
-        param += '--logrotate '
-
-        e.msginf('creating config file')
-        if sc_(param):
-            e.msgerr('failing to write config file. Aborting')
+    e.msginf('creating config file')
+    if e.sc_(param):
+        e.msgerr('failing to write config file. Aborting')
 
     e.msgdone('Installing done')
     return True
@@ -715,17 +692,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Odoo environment setup v3.6.0')
     parser.add_argument('-i', '--install-cli',
                         action='store_true',
-                        help="Install clients, requires -c option. You can define "
-                             "multiple clients like this: -c client1 -c client2 -c "
-                             "client3")
-
-    parser.add_argument('-U', '--uninstall-cli',
-                        action='store_true',
-                        help='Uninstall client and erase all files from environment '
-                             'including database. The command ask for permission to '
-                             'erase database. BE WARNED if say yes, all database files '
-                             'will be erased. BE WARNED AGAIN, database is common to '
-                             'all clients!!!! Required -c option')
+                        help="Install client, requires -c option.")
 
     parser.add_argument('-R', '--run-env',
                         action='store_true',
@@ -789,8 +756,7 @@ if __name__ == '__main__':
     parser.add_argument('-c',
                         action='append',
                         dest='client',
-                        help="Client name. You can define multiple clients like this: "
-                             "-c client1 -c client2 -c client3 and so one.")
+                        help="Client name")
 
     parser.add_argument('--debug',
                         action='store_true',
@@ -881,8 +847,6 @@ if __name__ == '__main__':
 
     if args.install_cli:
         install_client(enviro)
-    if args.uninstall_cli:
-        uninstall_client(enviro)
     if args.stop_env:
         stop_environment(enviro)
     if args.run_env:
