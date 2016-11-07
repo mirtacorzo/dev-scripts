@@ -277,10 +277,10 @@ def quality_test(e):
     params += '-v {}{}/config:/etc/odoo '.format(cli.get_home_dir(), cli.get_name())
     params += '-v {}{}/data_dir:/var/lib/odoo '.format(cli.get_home_dir(), cli.get_name())
     params += '-v {}sources:/mnt/extra-addons '.format(cli.get_home_dir())
-    params += '-v {}sources/openerp:/usr/lib/python2.7/dist-packages/openerp '.format(
-        cli.get_home_dir())
-    params += '-v {}sources/image-sources:/usr/local/lib/python2.7/dist-packages '.format(
-        cli.get_home_dir())
+    #    params += '-v {}sources/openerp:/usr/lib/python2.7/dist-packages/openerp '.format(
+    #        cli.get_home_dir())
+    #    params += '-v {}sources/image-sources:/usr/local/lib/python2.7/dist-packages '.format(
+    #        cli.get_home_dir())
     params += '--link postgres:db '
     params += '{} -- '.format(cli.get_image('odoo').get_image())
     params += '--stop-after-init '
