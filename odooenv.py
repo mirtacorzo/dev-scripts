@@ -40,108 +40,8 @@ import time
 import logging
 import logging.handlers
 
-from classes import Environment, clients__
+from classes import Environment
 from classes.git_issues import Issues
-
-"""
-def sc_(params):
-    _params = []
-    ret = 0
-    if type(params) == type([]):
-        for item in params:
-            _params.append(item)
-    else:
-        _params.append(params)
-
-    for item in _params:
-        lparams = shlex.split(item)
-
-        if args.verbose:
-            print item
-        # print lparams
-
-        ret += subprocess.call(params, shell=True)
-    return ret
-"""
-
-
-def update_db(e):
-    mods = e.get_modules_from_params()
-    db = e.get_database_from_params()
-    cli = e.get_client(e.get_clients_from_params('one'))
-
-    msg = 'Performing update'
-    if mods[0] == 'all':
-        msg += ' of all modules'
-    else:
-        msg += ' of module(s) ' + ', '.join(mods)
-
-    msg += ' on database "{}"'.format(db)
-
-    if e.debug_mode():
-        msg += ' forcing debug mode'
-    e.msgrun(msg)
-
-    params = 'sudo docker run --rm -it '
-    params += '-v {}{}/config:/etc/odoo '.format(cli.get_home_dir(), cli.get_name())
-    params += '-v {}{}/data_dir:/var/lib/odoo '.format(cli.get_home_dir(), cli.get_name())
-    params += '-v {}sources:/mnt/extra-addons '.format(cli.get_home_dir())
-    if e.debug_mode():
-        params += '-v {}sources/openerp:/usr/lib/python2.7/dist-packages/openerp '.format(
-            cli.get_home_dir())
-    params += '--link postgres:db '
-    params += '{} -- '.format(cli.get_image('odoo').get_image())
-    params += '--stop-after-init '
-    params += '--logfile=false '
-    params += '-d {} '.format(db)
-    params += '-u {} '.format(', '.join(mods))
-    params += '--log-level=warn '
-    if e.debug_mode():
-        params += '--debug '
-    sc_(params)
-
-
-def update_images_from_list(e, images):
-    # avoid image duplicates
-    tst_list = []
-    unique_images = []
-    for img in images:
-        if img.getFormattedImage() not in tst_list:
-            tst_list.append(img.getFormattedImage())
-            unique_images.append(img)
-
-    for img in unique_images:
-        params = img.getPullImage()
-        e.msginf('pulling image ' + img.getFormattedImage())
-        if sc_(params):
-            e.msgerr('Fail pulling image ' + img.get_name() + ' - Aborting.')
-
-
-def update_repos_from_list(e, repos):
-    # avoid repo duplicates
-    tst_list = []
-    unique_repos = []
-    for repo in repos:
-        if repo.get_formatted_repo() not in tst_list:
-            tst_list.append(repo.get_formatted_repo())
-            unique_repos.append(repo)
-    for repo in unique_repos:
-        # hay que actualizar a un tag especifico
-        if e.get_tag():
-            for command in repo.getTagRepo(e.get_tag()):
-                if sc_(command):
-                    e.msgerr('Fail installing environment, uninstall and try again.')
-        else:
-            # Check if repo exists
-            if os.path.isdir(repo.getInstDir()):
-                e.msginf('pull  ' + repo.get_formatted_repo())
-                params = repo.getPullRepo()
-            else:
-                e.msginf('clone ' + repo.get_formatted_repo())
-                params = repo.getCloneRepo(e)
-
-            if sc_(params):
-                e.msgerr('Fail installing environment, uninstall and try again.')
 
 
 def install_client(e):
@@ -195,21 +95,29 @@ def install_client(e):
     param += '--addons-path={}{} '.format(ou, cli.get_addons_path())
     param += '--logfile=/var/log/odoo/odoo.log '
     param += '--logrotate '
-
     e.msginf('creating config file')
     if e.sc_(param):
         e.msgerr('failing to write config file. Aborting')
-
     e.msgdone('Installing done')
-    return True
+
+
+def stop_environment(e):
+    images_to_stop = ['postgres', 'aeroo']
+    e.msgrun('Stopping images ' + ', '.join(images_to_stop))
+    err = 0
+    for name in images_to_stop:
+        e.msgrun('Stopping image ' + name)
+        err += e.sc_('sudo docker stop ' + name)
+        err += e.sc_('sudo docker rm ' + name)
+    if err:
+        e.msgerr("errors stopping images")
+    e.msgdone('Images stopped')
 
 
 def run_environment(e):
     e.msgrun('Running environment images')
-    clientNames = e.get_clients_from_params()
-
-    # TODO ver si lo modificamos para multiples clientes
-    cli = e.get_client(clientNames[0])
+    client_name = e.get_clients_from_params('one')
+    cli = e.get_client(client_name)
 
     err = 0
     image = cli.get_image('postgres')
@@ -218,25 +126,101 @@ def run_environment(e):
         params += '-p 5432:5432 '
     params += '-e POSTGRES_USER=odoo '
     params += '-e POSTGRES_PASSWORD=odoo '
-    params += '-v ' + e.get_psql_dir() + ':/var/lib/postgresql/data '
+    params += '-v {}::/var/lib/postgresql/data '.format(e.get_psql_dir())
     params += '--restart=always '
-    params += '--name ' + image.get_name() + ' '
+    params += '--name {} '.format(image.get_name())
     params += image.get_image()
-    err += sc_(params)
+    err += e.sc_(params)
 
     image = cli.get_image('aeroo')
     params = 'sudo docker run -d '
     params += '-p 127.0.0.1:8989:8989 '
-    params += '--name=' + image.get_name() + ' '
+    params += '--name={}'.format(image.get_name())
     params += '--restart=always '
     params += image.get_image()
-    err += sc_(params)
-
+    err += e.sc_(params)
     if err:
         e.msgerr('Fail running some images.')
-
     e.msgdone('images running')
-    return True
+
+
+def update_db(e):
+    mods = e.get_modules_from_params()
+    db = e.get_database_from_params()
+    cli = e.get_client(e.get_clients_from_params('one'))
+
+    msg = 'Performing update'
+    if mods[0] == 'all':
+        msg += ' of all modules'
+    else:
+        msg += ' of module(s) ' + ', '.join(mods)
+
+    msg += ' on database "{}"'.format(db)
+
+    if e.debug_mode():
+        msg += ' forcing debug mode'
+    e.msgrun(msg)
+
+    params = 'sudo docker run --rm -it '
+    params += '-v {}{}/config:/etc/odoo '.format(cli.get_home_dir(), cli.get_name())
+    params += '-v {}{}/data_dir:/var/lib/odoo '.format(cli.get_home_dir(), cli.get_name())
+    params += '-v {}sources:/mnt/extra-addons '.format(cli.get_home_dir())
+    if e.debug_mode():
+        params += '-v {}sources/openerp:/usr/lib/python2.7/dist-packages/openerp '.format(
+            cli.get_home_dir())
+    params += '--link postgres:db '
+    params += '{} -- '.format(cli.get_image('odoo').get_image())
+    params += '--stop-after-init '
+    params += '--logfile=false '
+    params += '-d {} '.format(db)
+    params += '-u {} '.format(', '.join(mods))
+    params += '--log-level=warn '
+    if e.debug_mode():
+        params += '--debug '
+    e.sc_(params)
+
+
+def update_images_from_list(e, images):
+    # avoid image duplicates
+    tst_list = []
+    unique_images = []
+    for img in images:
+        if img.getFormattedImage() not in tst_list:
+            tst_list.append(img.getFormattedImage())
+            unique_images.append(img)
+
+    for img in unique_images:
+        params = img.getPullImage()
+        e.msginf('pulling image ' + img.getFormattedImage())
+        if sc_(params):
+            e.msgerr('Fail pulling image ' + img.get_name() + ' - Aborting.')
+
+
+def update_repos_from_list(e, repos):
+    # avoid repo duplicates
+    tst_list = []
+    unique_repos = []
+    for repo in repos:
+        if repo.get_formatted_repo() not in tst_list:
+            tst_list.append(repo.get_formatted_repo())
+            unique_repos.append(repo)
+    for repo in unique_repos:
+        # hay que actualizar a un tag especifico
+        if e.get_tag():
+            for command in repo.getTagRepo(e.get_tag()):
+                if sc_(command):
+                    e.msgerr('Fail installing environment, uninstall and try again.')
+        else:
+            # Check if repo exists
+            if os.path.isdir(repo.getInstDir()):
+                e.msginf('pull  ' + repo.get_formatted_repo())
+                params = repo.getPullRepo()
+            else:
+                e.msginf('clone ' + repo.get_formatted_repo())
+                params = repo.getCloneRepo(e)
+
+            if sc_(params):
+                e.msgerr('Fail installing environment, uninstall and try again.')
 
 
 def server_help(e):
@@ -295,114 +279,65 @@ def quality_test(e):
 
 
 def run_client(e):
-    clients = e.get_clients_from_params()
-    for clientName in clients:
-        cli = e.get_client(clientName)
-        txt = 'Running image for client {}'.format(clientName)
-        if e.debug_mode():
-            txt += ' with debug mode on port {}'.format(cli.get_port())
-
-        e.msgrun(txt)
-        if e.debug_mode():
-            params = 'sudo docker run --rm -it '
-        else:
-            params = 'sudo docker run -d '
-        params += '--link aeroo:aeroo '
-        params += '-p {}:8069 '.format(cli.get_port())
-        params += '-v {}{}/config:/etc/odoo '.format(cli.get_home_dir(), cli.get_name())
-        params += '-v {}{}/data_dir:/var/lib/odoo '.format(cli.get_home_dir(),
-                                                           cli.get_name())
-        params += '-v {}sources:/mnt/extra-addons '.format(cli.get_home_dir())
-        if e.debug_mode():
-            # si es openupgrade el sourcesname es upgrade, sino es openerp
-            sourcesname = 'openerp' if clientName != 'ou' else 'upgrade'
-            params += '-v {}sources/{}:/usr/lib/python2.7/dist-packages/openerp '.format(
-                cli.get_home_dir(), sourcesname)
-        params += '-v {}{}/log:/var/log/odoo '.format(cli.get_home_dir(), cli.get_name())
-        params += '--link postgres:db '
-
-        if not e.debug_mode():
-            params += '--restart=always '
-
-        params += '--name {} '.format(cli.get_name())
-        params += '{} '.format(cli.get_image('odoo').get_image())
-
-        if not e.no_dbfilter():
-            params += '-- --db-filter={}_.* '.format(cli.get_name())
-
-        if not e.debug_mode():
-            params += '--logfile=/var/log/odoo/odoo.log '
-        else:
-            params += '--logfile=False '
-
-        if e.get_args().translate:
-            params += '--language=es --i18n-export=/etc/odoo/es.po --update ' \
-                      '--i18n-overwrite --modules={} --stop-after-init ' \
-                      '-d {}'.format(e.get_modules_from_params()[0],
-                                     e.get_database_from_params())
-
-        if sc_(params):
-            e.msgerr("Can't run client {}, Tip: run sudo docker rm -f {}".format(
-                cli.get_name(), cli.get_name()))
-
-        else:
-            e.msgdone(
-                'Client ' + clientName + ' up and running on port ' + cli.get_port())
-
-    return True
+    client_name = e.get_clients_from_params('one')
+    cli = e.get_client(client_name)
+    txt = 'Running image for client {}'.format(client_name)
+    if e.debug_mode():
+        txt += ' with debug mode on port {}'.format(cli.get_port())
+    e.msgrun(txt)
+    if e.debug_mode():
+        params = 'sudo docker run --rm -it '
+    else:
+        params = 'sudo docker run -d '
+    params += '--link aeroo:aeroo '
+    params += '-p {}:8069 '.format(cli.get_port())
+    params += '-v {}{}/config:/etc/odoo '.format(cli.get_home_dir(), cli.get_name())
+    params += '-v {}{}/data_dir:/var/lib/odoo '.format(cli.get_home_dir(),
+                                                       cli.get_name())
+    params += '-v {}sources:/mnt/extra-addons '.format(cli.get_home_dir())
+    if e.debug_mode():
+        # si es openupgrade el sourcesname es upgrade, sino es openerp
+        sourcesname = 'openerp' if client_name != 'ou' else 'upgrade'
+        params += '-v {}sources/{}:/usr/lib/python2.7/dist-packages/openerp '.format(
+            cli.get_home_dir(), sourcesname)
+    params += '-v {}{}/log:/var/log/odoo '.format(cli.get_home_dir(), cli.get_name())
+    params += '--link postgres:db '
+    if not e.debug_mode():
+        params += '--restart=always '
+    params += '--name {} '.format(cli.get_name())
+    params += '{} '.format(cli.get_image('odoo').get_image())
+    if not e.no_dbfilter():
+        params += '-- --db-filter={}_.* '.format(cli.get_name())
+    if not e.debug_mode():
+        params += '--logfile=/var/log/odoo/odoo.log '
+    else:
+        params += '--logfile=False '
+    if e.sc_(params):
+        e.msgerr("Can't run client {}, Tip: run sudo docker rm -f {}".format(
+            cli.get_name(), cli.get_name()))
+    e.msgdone('Client {}  up and running on port ()'.format(client_name, cli.get_port()))
 
 
 def stop_client(e):
-    clients = e.get_clients_from_params()
-    e.msgrun('stopping clients ' + ', '.join(clients))
-
-    for clientName in clients:
-        e.msginf('stopping image for client ' + clientName)
-        if sc_('sudo docker stop ' + clientName):
-            e.msgerr('cannot stop client ' + clientName)
-
-        if sc_('sudo docker rm ' + clientName):
-            e.msgerr('cannot remove client ' + clientName)
-
-    e.msgdone('all clients stopped')
-
-    return True
-
-
-def stop_environment(e):
-    images_to_stop = ['postgres', 'aeroo']
-    e.msgrun('Stopping images ' + ', '.join(images_to_stop))
-    err = 0
-    for name in images_to_stop:
-        e.msgrun('Stopping image ' + name)
-        err += sc_('sudo docker stop ' + name)
-        err += sc_('sudo docker rm ' + name)
-
-    if err:
-        e.msgerr("errors stopping images")
-
-    e.msgdone('Images stopped')
-    return True
+    client_name = e.get_clients_from_params('one')
+    e.msgrun('stopping client {}'.format(client_name))
+    if e.sc_('sudo docker stop ' + client_name):
+        e.msgerr('cannot stop client ' + client_name)
+    if e.sc_('sudo docker rm ' + client_name):
+        e.msgerr('cannot remove client ' + client_name)
+    e.msgdone('client stopped')
 
 
 def pull_all(e):
-    e.msgrun('--- Pulling all images')
-
-    images = []
-    for cli in e.get_clients_form_dict():
-        if cli.get_name() in e.get_clients_from_params():
-            images.extend(cli.get_images())
-    update_images_from_list(e, images)
-
+    client_name = e.get_clients_from_params('one')
+    e.msgrun('--- Pulling all images for client {}'.format(client_name))
+    cli = e.get_client(client_name)
+    for img in cli.get_images():
+        img.update
     e.msgdone('All images ok ')
-    e.msgrun('--- Pulling all repos')
-
-    repos = []
-    for cli in e.get_clients_form_dict():
-        if cli.get_name() in e.get_clients_from_params():
-            repos.extend(cli.get_repos())
-    update_repos_from_list(e, repos)
-
+    e.msgrun('--- Pulling all repos for client {}'.format(client_name))
+    for rep in cli.get_repos():
+        rep.update
     e.msgdone('All repos ok ')
 
 
@@ -416,61 +351,39 @@ def list_data(e):
                     e.msginf(line)
         except Exception as ex:
             e.msgerr(str(ex))
+        return True
 
-        exit(0)
-
-    # if no -c option get all clients else get -c clients
-    if args.client is None:
-        clients = e.get_clients_form_dict()
+    if args.client:
+        client_names = args.client
     else:
-        clients = []
-        for clientName in e.get_clients_from_params():
-            clients.append(e.get_client(clientName))
+        client_names = e.get_clients_form_dict()
+
+    clients = []
+    for cn in client_names:
+        clients.append(e.get_client(cn))
 
     for cli in clients:
-        e.msginf('client -- ' + cli.get_name(0) + ' -- on port ' + cli.get_port())
-
+        e.msginf('client -- {} -- on port {}'.format(cli.get_name(), cli.get_port()))
         e.msgrun(3 * '-' +
                  ' Images ' +
                  72 * '-')
-        for image in cli.get_images():
-            e.msgrun('   ' +
-                     image.getFormattedImage())
+        for img in cli.get_images():
+            e.msgrun('   {}'.format(img.getFormattedImage()))
         e.msgrun(' ')
         e.msgrun(3 * '-' + 'branch' +
                  4 * '-' + 'repository' +
                  25 * '-' + 'instalation dir' +
                  20 * '-')
+        lenrep = lendir = 0
         for repo in cli.get_repos():
-            e.msgrun('   ' +
-                     repo.get_formatted_repo() +
-                     ' ' + repo.getInstDir())
-        e.msgrun(' ')
-
-
-def no_ip_install(e):
-    e.msgrun('Installing no-ip client')
-    sc_('sudo apt-get install make')
-    sc_('sudo apt-get -y install gcc')
-    sc_('wget -O /usr/local/src/noip.tar.gz \
-    http://www.noip.com/client/linux/noip-duc-linux.tar.gz')
-    sc_('sudo tar -xf noip.tar.gz -C /usr/local/src/')
-    sc_('sudo wget -P /usr/local/src/ \
-    http://www.noip.com/client/linux/noip-duc-linux.tar.gz')
-    sc_('sudo tar xf /usr/local/src/noip-duc-linux.tar.gz -C /usr/local/src/')
-    sc_('cd /usr/local/src/noip-2.1.9-1 && sudo make install')
-    e.msginf("Please answer some questions")
-    sc_('sudo rm /usr/local/src/noip-duc-linux.tar.gz')
-    sc_('sudo cp /usr/local/src/noip-2.1.9-1/debian.noip2.sh  /etc/init.d/')
-    sc_('sudo chmod +x /etc/init.d/debian.noip2.sh')
-    sc_('sudo update-rc.d debian.noip2.sh defaults')
-    sc_('sudo /etc/init.d/debian.noip2.sh restart')
-    e.msgdone('no-ip service running')
-
-    # To config defaults noip2 with capital C
-    # sudo /usr/local/bin/noip2 -C
-    return True
-
+            l = len(repo.get_formatted_repo())
+            lenrep = l if l > lenrep else lenrep
+            l = len(repo.getInstDir())
+            lendir = l if l > lendir else lendir
+        for repo in cli.get_repos():
+            msg = '   {repo:<{len}} '.format(repo=repo.get_formatted_repo(), len=lenrep)
+            msg += '{dir:<{len}}'.format(dir=repo.getInstDir(), len=lendir)
+            e.msgrun(msg)
 
 def post_backup(e):
     clientName = e.get_clients_from_params('one')
@@ -488,7 +401,7 @@ def post_backup(e):
             filename, file_extension = os.path.splitext(file)
             seconds = os.path.getctime(root + file)
             if seconds < limit_seconds:
-                sc_('sudo rm ' + root + file)
+                e.sc_('sudo rm ' + root + file)
                 # os.remove(root+file)
                 logger.info('Removed backup file "%s"', file)
 
@@ -496,7 +409,8 @@ def post_backup(e):
     for root, dirs, files in os.walk(backup_dir):
         for file in files:
             if file[-13:] == 'upload-backup':
-                sc_(backup_dir + file)
+                e.sc_(backup_dir + file)
+
 
 def backup(e):
     """
@@ -518,7 +432,7 @@ def backup(e):
     params += '--env DBNAME=' + dbname + ' '
     params += img.get_image() + ' backup'
     try:
-        if sc_(params):
+        if e.sc_(params):
             e.msgerr('failing backup. Aborting')
     except Exception as ex:
         logger.error('Failing backup %s', str(ex))
@@ -554,7 +468,7 @@ def restore(e):
     params += '--env DATE=' + timestamp + ' '
     params += img.get_image() + ' restore'
 
-    if sc_(params):
+    if e.sc_(params):
         e.msgerr('failing restore. Aborting')
 
     e.msgdone('Restore done')
@@ -635,11 +549,11 @@ def backup_list(e):
 def cleanup(e):
     if raw_input('Delete ALL databases for ALL clients SURE?? (y/n) ') == 'y':
         e.msginf('deleting all databases!')
-        sc_('sudo rm -r ' + e.get_psql_dir())
+        e.sc_('sudo rm -r ' + e.get_psql_dir())
 
     if raw_input('Delete clients and sources SURE?? (y/n) ') == 'y':
         e.msginf('deleting all client and sources!')
-        sc_('sudo rm -r ' + e._home_template + '*')
+        e.sc_('sudo rm -r ' + e._home_template + '*')
 
 
 def cron_jobs(e):
@@ -651,12 +565,12 @@ def cron_jobs(e):
     cronjob = '0 0,12 * * * {}'.format(croncmd)
     command = '(sudo crontab -l | grep -v "{}" ; echo "{}") | sudo crontab - '.format(
         croncmd, cronjob)
-    sc_(command)
+    e.sc_(command)
 
 
 def cron_list(e):
     e.msginf('List of cron backup jobs on this server')
-    sc_('sudo crontab -l | grep "#Added by odooenv.py"')
+    e.sc_('sudo crontab -l | grep "#Added by odooenv.py"')
 
 
 def tag_repos(e):
@@ -666,8 +580,10 @@ def tag_repos(e):
     tag = client + '-' + milestone
     e.msginf('tagging repos with ' + tag)
 
+
 def issues(e):
     e.msginf('issues')
+
 
 if __name__ == '__main__':
     LOG_FILENAME = '/var/log/odooenv/odooenv.log'
@@ -712,12 +628,13 @@ if __name__ == '__main__':
 
     parser.add_argument('-p', '--pull-all',
                         action='store_true',
-                        help="Pull all images and repos.")
+                        help="Pull all images and repos for a client. Needs -c")
 
     parser.add_argument('-l', '--list',
                         action='store_true',
                         help="List all data in this server. Clients and images. with "
-                             "--issues REPO list the github issues from repo")
+                             "-c option list only one client and with --issues REPO "
+                             "option list the github issues from repo")
 
     parser.add_argument('-v', '--verbose',
                         action='store_true',
@@ -843,7 +760,7 @@ if __name__ == '__main__':
                              "client ntame and milestone from client sources")
 
     args = parser.parse_args()
-    enviro = Environment(args, clients__)
+    enviro = Environment(args)
 
     if args.install_cli:
         install_client(enviro)
@@ -859,8 +776,6 @@ if __name__ == '__main__':
         pull_all(enviro)
     if args.list:
         list_data(enviro)
-    if args.no_ip_install:
-        no_ip_install(enviro)
     if args.update_db:
         update_db(enviro)
     if args.backup:
