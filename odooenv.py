@@ -192,7 +192,7 @@ def update_images_from_list(e, images):
     for img in unique_images:
         params = img.getPullImage()
         e.msginf('pulling image ' + img.getFormattedImage())
-        if sc_(params):
+        if e.sc_(params):
             e.msgerr('Fail pulling image ' + img.get_name() + ' - Aborting.')
 
 
