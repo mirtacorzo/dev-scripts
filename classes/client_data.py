@@ -101,7 +101,7 @@ _clients = [
      ]
      },
     
-     {'name': 'despensa', 'port': '8004', 'odoover': '8.0',
+     {'name': 'despensamarco', 'port': '8004', 'odoover': '8.0',
      'repos': [
          {'usr': 'jobiols', 'repo': 'odoo-argentina', 'branch': '8.0'},
          {'usr': 'jobiols', 'repo': 'aeroo_reports', 'branch': '8.0'},
